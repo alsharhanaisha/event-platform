@@ -1,14 +1,16 @@
 # Database
 
-The app stores its data in a Supabase (Postgres) database with two tables:
+The app stores its data in a Supabase (Postgres) database with three tables:
 
 - **`events`**: one row per event.
 - **`ticket_types`**: the ticket options for each event, such as Early Bird, General and VIP.
+- **`event_private_details`**: details of an event that the public must not see, such as the online join link.
 
-One event can have many ticket types. Each ticket type belongs to exactly one event.
+One event can have many ticket types. Each ticket type belongs to exactly one event. Each event has at most one row of private details.
 
 ```
 events (1) ──── (many) ticket_types
+events (1) ──── (0 or 1) event_private_details
 ```
 
 The SQL that creates these tables is in [`supabase/migrations/`](supabase/migrations/).
@@ -53,14 +55,13 @@ Each row describes one event: what it is, when and where it happens, what it cos
 | `map_url` | `text` | A link to the location on a map, such as Google Maps. |
 | `latitude` | `numeric(9,6)` (decimal number) | The exact map position, for showing a pin on a map. |
 | `longitude` | `numeric(9,6)` | The exact map position, paired with `latitude`. |
-| `online_meeting_url` | `text` | The link to join online or hybrid events, such as a Zoom or Meet link. |
 
 ### Pricing
 
 | Column | Type | Why it's there |
 |---|---|---|
 | `is_free` | `boolean` (true/false) | A quick flag for free events, used for "free events only" filters. Defaults to `false`. |
-| `price` | `numeric(10,2)` (money, 2 decimals) | The main or starting price. Can't be negative. Detailed prices are in `ticket_types`. |
+| `price` | `numeric(10,3)` (money, 3 decimals) | The main or starting price. Can't be negative. Detailed prices are in `ticket_types`. Three decimals because the Kuwaiti dinar is divided into 1000 fils, as in 2.750 KWD. |
 | `currency` | `text` | The currency of the price. Defaults to `KWD` (Kuwaiti dinar). |
 
 ### Audience
@@ -86,8 +87,8 @@ Each row describes one event: what it is, when and where it happens, what it cos
 | Column | Type | Why it's there |
 |---|---|---|
 | `organizer_name` | `text` | The person or company running the event. |
-| `organizer_email` | `text` | The organizer's contact email. |
-| `organizer_phone` | `text` | The organizer's contact phone number. Stored as text so it can include `+` and spaces. |
+
+The organizer's email and phone number are in `event_private_details`.
 
 ### Status
 
@@ -123,11 +124,26 @@ Each row is one kind of ticket for one event. For example, the Tech Summit has t
 | `id` | `uuid` | A unique ID for this ticket type, created automatically. |
 | `event_id` | `uuid` | The event this ticket belongs to. **Required.** It must match an `events.id`. If the event is deleted, its ticket types are deleted too. |
 | `name` | `text` | The ticket's label, such as Adult, Child, Early Bird or VIP. **Required.** |
-| `price` | `numeric(10,2)` | The cost of this ticket. Defaults to `0`, and can't be negative. |
+| `price` | `numeric(10,3)` | The cost of this ticket, with 3 decimals for fils. Defaults to `0`, and can't be negative. |
 | `currency` | `text` | The currency of the price. Defaults to `KWD`. |
 | `quantity` | `int` | How many tickets of this type are available. It must be more than 0 if set. Leave it empty for unlimited. |
 | `sales_end_at` | `timestamptz` | When this ticket stops being sold. Useful for Early Bird deals. |
 | `created_at` | `timestamptz` | When the row was added. Set automatically. |
+
+---
+
+## `event_private_details`
+
+Details of an event that only you can see. They live in their own table so the public can read an event without seeing them.
+
+| Column | Type | Why it's there |
+|---|---|---|
+| `event_id` | `uuid` | The event these details belong to. It must match an `events.id`, and each event has at most one row. If the event is deleted, its private details are deleted too. |
+| `online_meeting_url` | `text` | The link to join online or hybrid events, such as a Zoom or Meet link. Kept private so only ticket holders get it. |
+| `organizer_email` | `text` | The organizer's contact email. |
+| `organizer_phone` | `text` | The organizer's contact phone number. Stored as text so it can include `+` and spaces. |
+| `created_at` | `timestamptz` | When the row was added. Set automatically. |
+| `updated_at` | `timestamptz` | When the row was last changed. **Updated automatically** by a trigger on every edit. |
 
 ---
 
@@ -142,10 +158,11 @@ Besides the column limits listed above, the database enforces these rules, so ba
 
 ## Who can see what (security)
 
-Both tables have **Row Level Security** turned on, which controls who can see and change rows:
+All three tables have **Row Level Security** turned on, which controls who can see and change rows:
 
 - **Anyone**, including visitors who aren't logged in, can **read** events that aren't drafts, and the ticket types of those events.
 - **Drafts are hidden** from the public, along with their ticket types.
+- **`event_private_details` is hidden from everyone** in the public app, for every event. It has no read rules on purpose. (Supabase's advisor shows an "RLS Enabled No Policy" note for it; that note is expected.)
 - **Nobody** can add, edit or delete rows through the public app. Changes are made from the Supabase dashboard or with the secret service key.
 
 ## Speed (indexes)
